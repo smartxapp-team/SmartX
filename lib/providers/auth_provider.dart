@@ -50,10 +50,13 @@ class AuthProvider with ChangeNotifier {
 
   Future<bool> login(String user, String password) async {
     try {
+      final loginUrl = Uri.parse(_apiUrl).resolve('api/login');
+      final body = {'username': user, 'password': password};
+
       final response = await http.post(
-        Uri.parse('$_apiUrl/api/login'),
+        loginUrl,
         headers: {'Content-Type': 'application/json'},
-        body: json.encode({'username': user, 'password': password}),
+        body: json.encode(body),
       ).timeout(const Duration(seconds: 20));
 
       if (response.statusCode == 200) {
@@ -73,7 +76,6 @@ class AuthProvider with ChangeNotifier {
         return false;
       }
     } catch (e) {
-      print('Login failed: $e');
       _isLoggedIn = false;
       notifyListeners();
       return false;

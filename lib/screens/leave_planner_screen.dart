@@ -7,7 +7,7 @@ import '../providers/auth_provider.dart';
 import '../services/api_service.dart';
 import '../widgets/themed_background.dart';
 
-enum LeaveType { none, single, long }
+enum LeaveType { none, single, long, choice }
 
 class LeavePlannerScreen extends StatefulWidget {
   const LeavePlannerScreen({super.key});
@@ -21,6 +21,7 @@ class _LeavePlannerScreenState extends State<LeavePlannerScreen> {
   LeaveType _leaveType = LeaveType.none;
   DateTime? _selectedSingleDate;
   final List<DateTime> _selectedLongLeaveDates = [];
+  final Map<DateTime, int> _choiceDates = {};
   Map<String, dynamic>? _analysisData;
   bool _isLoading = false;
 
@@ -74,217 +75,196 @@ class _LeavePlannerScreenState extends State<LeavePlannerScreen> {
           _selectedLongLeaveDates.add(date);
         }
         _selectedLongLeaveDates.sort();
+      } else if (_leaveType == LeaveType.choice) {
+        _handleChoiceDateSelection(date);
+      }
+    });
+  }
+
+  void _handleChoiceDateSelection(DateTime date) {
+    setState(() {
+      if (_choiceDates.containsKey(date)) {
+        if (_choiceDates[date] == 1) {
+          _choiceDates[date] = 2; // Double click -> Absent (red)
+        } else {
+          _choiceDates.remove(date); // Triple click -> Deselect
+        }
+      } else {
+        _choiceDates[date] = 1; // Single click -> Present (green)
       }
     });
   }
 
   void _analyzeLeave() async {
-    setState(() { _isLoading = true; _analysisData = null; });
-
-    final plannerData = await _leavePlannerFuture;
-    if (plannerData == null || plannerData.containsKey('error')) {
-      setState(() {
-        _analysisData = {'error': 'Failed to retrieve planner data.'};
-        _isLoading = false;
-      });
-      return;
-    }
-
-    final originalSubjects = json.decode(json.encode(plannerData['subjects'])) as Map<String, dynamic>? ?? {};
-    final originalBioLog = List<Map<String, dynamic>>.from(json.decode(json.encode(plannerData['bio_log'] ?? [])));
-    final timetable = plannerData['timetable'] as Map<String, dynamic>? ?? {};
-
-    if (originalSubjects.isEmpty || timetable.isEmpty) {
-      setState(() {
-        _analysisData = {'error': "Timetable or Subject data is missing."};
-        _isLoading = false;
-      });
-      return;
-    }
-
-    List<DateTime> leaveDates = [];
-    if (_leaveType == LeaveType.single && _selectedSingleDate != null) {
-      leaveDates.add(_selectedSingleDate!);
-    } else if (_leaveType == LeaveType.long) {
-      leaveDates.addAll(_selectedLongLeaveDates);
-    }
-
-    if (leaveDates.isEmpty) {
-      setState(() { _isLoading = false; });
-      return;
-    }
-
     final now = DateTime.now();
     final today = DateTime(now.year, now.month, now.day);
+    DateTime firstSelectableDate = (now.hour >= 13) ? today.add(const Duration(days: 1)) : today;
 
-    var beforeLeaveSubjects = json.decode(json.encode(originalSubjects));
-    var beforeLeaveBioLog = List<Map<String, dynamic>>.from(originalBioLog);
-
-    final firstLeaveDate = leaveDates.first;
-    for (var date = today; date.isBefore(firstLeaveDate); date = date.add(const Duration(days: 1))) {
-      if (date.weekday == DateTime.sunday) continue;
-
-      beforeLeaveBioLog.add({'status': 'Present'});
-      final dayOfWeek = DateFormat('EEEE').format(date);
-      final classesToday = timetable[dayOfWeek] as List<dynamic>? ?? [];
-      for (final classInfo in classesToday) {
-        final subjectName = classInfo['subject_full'];
-        if (beforeLeaveSubjects.containsKey(subjectName)) {
-          beforeLeaveSubjects[subjectName]['attended'] = (beforeLeaveSubjects[subjectName]['attended'] ?? 0) + 1;
-          beforeLeaveSubjects[subjectName]['conducted'] = (beforeLeaveSubjects[subjectName]['conducted'] ?? 0) + 1;
+    if (_leaveType == LeaveType.choice) {
+      final dates = _choiceDates.keys.toList();
+      if (dates.isNotEmpty) {
+        dates.sort();
+        final lastSelected = dates.last;
+        for (var d = firstSelectableDate; d.isBefore(lastSelected); d = d.add(const Duration(days: 1))) {
+          if (d.weekday != DateTime.sunday && !_choiceDates.containsKey(d)) {
+            _showGapErrorPopup();
+            return;
+          }
         }
       }
     }
 
-    double beforeBioPercentage = _calculateBioPercentage(beforeLeaveBioLog);
-    double beforeClassPercentage = _calculateOverallAttendance(beforeLeaveSubjects);
-
-    var afterLeaveSubjects = json.decode(json.encode(beforeLeaveSubjects));
-    var afterLeaveBioLog = List<Map<String, dynamic>>.from(beforeLeaveBioLog);
-
-    for (final leaveDate in leaveDates) {
-      afterLeaveBioLog.add({'status': 'Absent'});
-      final dayOfWeekOfLeave = DateFormat('EEEE').format(leaveDate);
-      final classesOnLeaveDay = timetable[dayOfWeekOfLeave] as List<dynamic>? ?? [];
-      for (final classInfo in classesOnLeaveDay) {
-        final subjectName = classInfo['subject_full'];
-        if (afterLeaveSubjects.containsKey(subjectName)) {
-          afterLeaveSubjects[subjectName]['conducted'] = (afterLeaveSubjects[subjectName]['conducted'] ?? 0) + 1;
-        }
+    setState(() { _isLoading = true; _analysisData = null; });
+    try {
+      final plannerData = await _leavePlannerFuture;
+      if (plannerData == null || plannerData.containsKey('error')) {
+        if (mounted) setState(() { _analysisData = {'error': 'Failed to retrieve planner data.'}; });
+        return;
       }
-    }
 
-    double afterBioPercentage = _calculateBioPercentage(afterLeaveBioLog);
-    double afterClassPercentage = _calculateOverallAttendance(afterLeaveSubjects);
+      final originalSubjects = json.decode(json.encode(plannerData['subjects'])) as Map<String, dynamic>? ?? {};
+      final originalBioLog = List<Map<String, dynamic>>.from(json.decode(json.encode(plannerData['bio_log'] ?? [])));
+      final timetable = plannerData['timetable'] as Map<String, dynamic>? ?? {};
 
-    List<Map<String, dynamic>> subjectImpactList = [];
-    final allLeaveDayClasses = leaveDates.expand((d) {
-      final dayOfWeek = DateFormat('EEEE').format(d);
-      return timetable[dayOfWeek] as List<dynamic>? ?? [];
-    }).map((c) => c['subject_full'] as String).toSet();
+      if (originalSubjects.isEmpty || timetable.isEmpty) {
+        if (mounted) setState(() { _analysisData = {'error': "Timetable or Subject data is missing."}; });
+        return;
+      }
 
-    for (final name in originalSubjects.keys) {
-      if (allLeaveDayClasses.contains(name)) {
-        final beforeData = beforeLeaveSubjects[name];
-        final afterData = afterLeaveSubjects[name];
-        final initialAtt = (beforeData['attended'] ?? 0) / (beforeData['conducted'] ?? 1) * 100;
-        final projectedAtt = (afterData['attended'] ?? 0) / (afterData['conducted'] ?? 1) * 100;
+      final double initialBioPercentage = _calculateBioPercentage(originalBioLog);
+      final double initialClassPercentage = _calculateOverallAttendance(originalSubjects);
+      final Map<String, double> initialSubjectPercentages = Map.from(originalSubjects).map((key, value) {
+        return MapEntry(key, (value['conducted'] > 0) ? (value['attended'] / value['conducted'] * 100) : 100.0);
+      });
 
-        subjectImpactList.add({
-          'name': name,
-          'initial': initialAtt,
-          'projected': projectedAtt,
+      var simulatedSubjects = json.decode(json.encode(originalSubjects));
+      var simulatedBioLog = List<Map<String, dynamic>>.from(originalBioLog);
+
+      List<Map<String, dynamic>> dailyBreakdown = [];
+      DateTime? lastDateForAnalysis;
+      DateTime? firstDateForAnalysis;
+
+      if (_leaveType == LeaveType.choice) {
+        final choiceDatesSorted = _choiceDates.keys.toList()..sort();
+        if (choiceDatesSorted.isEmpty) {
+          if (mounted) setState(() => _isLoading = false);
+          return;
+        }
+        firstDateForAnalysis = firstSelectableDate;
+        lastDateForAnalysis = choiceDatesSorted.last;
+      } else {
+        List<DateTime> leaveDates = [];
+        if (_leaveType == LeaveType.single && _selectedSingleDate != null) {
+          leaveDates.add(_selectedSingleDate!);
+        } else if (_leaveType == LeaveType.long) {
+          leaveDates.addAll(_selectedLongLeaveDates);
+        }
+
+        if (leaveDates.isEmpty) {
+          if (mounted) setState(() => _isLoading = false);
+          return;
+        }
+        leaveDates.sort();
+        firstDateForAnalysis = today;
+        lastDateForAnalysis = leaveDates.last;
+      }
+      
+      for (var date = firstDateForAnalysis; !date.isAfter(lastDateForAnalysis); date = date.add(const Duration(days: 1))) {
+        if (date.weekday == DateTime.sunday) continue;
+        
+        bool isLeaveDay = false;
+        String status = 'Present';
+
+        if (_leaveType == LeaveType.choice) {
+          if (_choiceDates.containsKey(date)) {
+            isLeaveDay = _choiceDates[date] == 2;
+            status = isLeaveDay ? 'Absent' : 'Present';
+          } else {
+            // This case should be prevented by the validation logic, but as a fallback
+            continue;
+          }
+        } else {
+           List<DateTime> leaveDates = [];
+           if (_leaveType == LeaveType.single && _selectedSingleDate != null) {
+             leaveDates.add(_selectedSingleDate!);
+           } else if (_leaveType == LeaveType.long) {
+             leaveDates.addAll(_selectedLongLeaveDates);
+           }
+          isLeaveDay = leaveDates.any((d) => DateUtils.isSameDay(d, date)) || date.isAfter(today);
+          status = isLeaveDay ? 'Absent' : 'Present';
+        }
+        
+        simulatedBioLog.add({'status': status});
+
+        final dayOfWeek = DateFormat('EEEE').format(date);
+        final classesToday = timetable[dayOfWeek] as List<dynamic>? ?? [];
+        final Map<String, double> subjectsForBreakdown = {};
+
+        for (final classInfo in classesToday) {
+          final subjectName = classInfo['subject_full'];
+          if (simulatedSubjects.containsKey(subjectName)) {
+            simulatedSubjects[subjectName]['conducted'] = (simulatedSubjects[subjectName]['conducted'] ?? 0) + 1;
+            if (!isLeaveDay) {
+              simulatedSubjects[subjectName]['attended'] = (simulatedSubjects[subjectName]['attended'] ?? 0) + 1;
+            }
+            final value = simulatedSubjects[subjectName];
+            subjectsForBreakdown[subjectName] = (value['conducted'] > 0) ? (value['attended'] / value['conducted'] * 100) : 100.0;
+          }
+        }
+
+        dailyBreakdown.add({
+          'date': date,
+          'status': status,
+          'bio_percent': _calculateBioPercentage(simulatedBioLog),
+          'class_percent': _calculateOverallAttendance(simulatedSubjects),
+          'subjects': subjectsForBreakdown
+        });
+      }
+
+      final finalSubjectPercentages = Map.from(simulatedSubjects).map((key, value) {
+        return MapEntry(key, (value['conducted'] > 0) ? (value['attended'] / value['conducted'] * 100) : 100.0);
+      });
+
+      if (mounted) {
+        setState(() {
+          _analysisData = {
+            'type': 'analysis',
+            'initialBio': initialBioPercentage,
+            'initialClass': initialClassPercentage,
+            'initialSubjects': initialSubjectPercentages,
+            'finalBio': _calculateBioPercentage(simulatedBioLog),
+            'finalClass': _calculateOverallAttendance(simulatedSubjects),
+            'finalSubjects': finalSubjectPercentages,
+            'daily_breakdown': dailyBreakdown,
+            'last_date': lastDateForAnalysis ?? DateTime.now()
+          };
+        });
+      }
+    } catch (e, s) {
+      print('Error during leave analysis: $e');
+      print(s);
+      if (mounted) {
+        setState(() {
+          _analysisData = {'error': 'An unexpected error occurred during analysis.'};
+        });
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
         });
       }
     }
-
-    setState(() {
-      _analysisData = {
-        'type': 'analysis',
-        'initialBio': beforeBioPercentage,
-        'projectedBio': afterBioPercentage,
-        'initialClass': beforeClassPercentage,
-        'projectedClass': afterClassPercentage,
-        'subjects': subjectImpactList,
-      };
-      _isLoading = false;
-    });
   }
-
-  void _suggestSafeLeave() async {
-    setState(() { _isLoading = true; _analysisData = null; });
-
-    final plannerData = await _leavePlannerFuture;
-    if (plannerData == null || plannerData.containsKey('error')) {
-      setState(() {
-        _analysisData = {'error': 'Failed to retrieve planner data.'};
-        _isLoading = false;
-      });
-      return;
-    }
-
-    final originalSubjects = json.decode(json.encode(plannerData['subjects'])) as Map<String, dynamic>? ?? {};
-    final timetable = plannerData['timetable'] as Map<String, dynamic>? ?? {};
-
-    if (originalSubjects.isEmpty || timetable.isEmpty) {
-      setState(() {
-        _analysisData = {'error': "Timetable or Subject data is missing."};
-        _isLoading = false;
-      });
-      return;
-    }
-    
-    final today = DateTime.now();
-    final currentOverallAttendance = _calculateOverallAttendance(originalSubjects);
-
-    List<Map<String, dynamic>> impactDetails = [];
-
-    final lastSemDateString = plannerData['last_sem_date'] as String?;
-    DateTime lastDay = today.add(const Duration(days: 30));
-    if (lastSemDateString != null && lastSemDateString != 'N/A') {
-      try {
-        lastDay = DateFormat('dd-MM-yyyy').parse(lastSemDateString);
-      } catch (_) {}
-    }
-
-    for (var i = 1; i < 30; i++) {
-      final date = today.add(Duration(days: i));
-      if(date.isAfter(lastDay)) break;
-      if (date.weekday == DateTime.sunday) continue;
-
-      var tempSubjects = json.decode(json.encode(originalSubjects));
-      final dayOfWeek = DateFormat('EEEE').format(date);
-      final classesOnDate = timetable[dayOfWeek] as List<dynamic>? ?? [];
-      
-      if (classesOnDate.isEmpty) {
-        impactDetails.add({'date': date, 'impact': 0.0});
-        continue;
-      }
-
-      for (var classInfo in classesOnDate) {
-        final subjectName = classInfo['subject_full'];
-        if (tempSubjects.containsKey(subjectName)) {
-          tempSubjects[subjectName]['conducted'] = (tempSubjects[subjectName]['conducted'] ?? 0) + 1;
-        }
-      }
-      final projectedAttendance = _calculateOverallAttendance(tempSubjects);
-      final impact = currentOverallAttendance - projectedAttendance;
-      impactDetails.add({'date': date, 'impact': impact > 0 ? impact : 0.0 });
-    }
-
-    if (impactDetails.isEmpty) {
-       setState(() {
-        _analysisData = {
-          'type': 'suggestion',
-          'reason': 'No suitable leave day found in the next 30 days.',
-          'impacts': [],
-        };
-        _isLoading = false;
-      });
-      return;
-    }
-
-    impactDetails.sort((a, b) => a['impact'].compareTo(b['impact']));
-
-    setState(() {
-      _analysisData = {
-        'type': 'suggestion',
-        'reason': 'The following days have the lowest impact on your overall attendance.',
-        'impacts': impactDetails,
-      };
-      _isLoading = false;
-    });
-  }
-
 
   double _calculateBioPercentage(List<Map<String, dynamic>> bioLog) {
-    if (bioLog.isEmpty) return 0.0;
+    if (bioLog.isEmpty) return 100.0;
     final presentDays = bioLog.where((log) => (log['status'] as String? ?? '').toLowerCase().startsWith('p')).length;
     return (presentDays / bioLog.length) * 100;
   }
 
   double _calculateOverallAttendance(Map<String, dynamic> subjects) {
-    if (subjects.isEmpty) return 0.0;
+    if (subjects.isEmpty) return 100.0;
     double totalAttended = 0;
     double totalConducted = 0;
     for (var data in subjects.values) {
@@ -292,6 +272,54 @@ class _LeavePlannerScreenState extends State<LeavePlannerScreen> {
       totalConducted += (data['conducted'] ?? 0);
     }
     return totalConducted == 0 ? 100.0 : (totalAttended / totalConducted) * 100;
+  }
+  
+  void _showSelectOptionPopup() {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Select an Option'),
+        content: const Text('Please select a leave type before choosing dates.'),
+        actions: [
+          TextButton(
+            child: const Text('OK'),
+            onPressed: () => Navigator.of(ctx).pop(),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showChoiceInfoPopup() {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Choice Selection'),
+        content: const Text('1 click for Present (green)\n2 clicks for Absent (red)\n3 clicks to deselect.'),
+        actions: [
+          TextButton(
+            child: const Text('OK'),
+            onPressed: () => Navigator.of(ctx).pop(),
+          ),
+        ],
+      ),
+    );
+  }
+  
+  void _showGapErrorPopup() {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Date Gap Detected'),
+        content: const Text('Please select a status for all previous days starting from the first available date.'),
+        actions: [
+          TextButton(
+            child: const Text('OK'),
+            onPressed: () => Navigator.of(ctx).pop(),
+          ),
+        ],
+      ),
+    );
   }
 
   @override
@@ -315,14 +343,16 @@ class _LeavePlannerScreenState extends State<LeavePlannerScreen> {
               return Center(child: Text('Could not load planner data.', style: theme.textTheme.titleMedium));
             }
 
+            final plannerData = snapshot.data!;
+            final initialBio = _calculateBioPercentage(List<Map<String, dynamic>>.from(plannerData['bio_log'] ?? []));
+            final initialClass = _calculateOverallAttendance(Map<String, dynamic>.from(plannerData['subjects'] ?? {}));
+
             final now = DateTime.now();
             final today = DateTime(now.year, now.month, now.day);
-            DateTime firstSelectableDate = (now.hour > 12 || (now.hour == 12 && now.minute >= 30))
-                ? today.add(const Duration(days: 1))
-                : today;
+            DateTime firstSelectableDate = (now.hour >= 13) ? today.add(const Duration(days: 1)) : today;
 
-            final lastDayString = snapshot.data!['last_sem_date'] as String?;
-            DateTime lastSelectableDate = DateTime(now.year + 1);
+            final lastDayString = plannerData['last_sem_date'] as String?;
+            DateTime lastSelectableDate = DateTime(now.year, now.month + 2);
             if (lastDayString != null && lastDayString != 'N/A') {
               try {
                 lastSelectableDate = DateFormat('dd-MM-yyyy').parse(lastDayString);
@@ -334,6 +364,8 @@ class _LeavePlannerScreenState extends State<LeavePlannerScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
+                  _buildCurrentStats(theme, lastSelectableDate, initialBio, initialClass),
+                  const SizedBox(height: 16),
                   Row(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
@@ -345,10 +377,11 @@ class _LeavePlannerScreenState extends State<LeavePlannerScreen> {
                           setState(() {
                             _leaveType = selected ? LeaveType.single : LeaveType.none;
                             _selectedLongLeaveDates.clear();
+                             _choiceDates.clear();
                           });
                         },
                       ),
-                      const SizedBox(width: 16),
+                      const SizedBox(width: 8),
                       ChoiceChip(
                         label: const Text('Long Leave'),
                         selected: _leaveType == LeaveType.long,
@@ -357,6 +390,23 @@ class _LeavePlannerScreenState extends State<LeavePlannerScreen> {
                           setState(() {
                             _leaveType = selected ? LeaveType.long : LeaveType.none;
                             _selectedSingleDate = null;
+                            _choiceDates.clear();
+                          });
+                        },
+                      ),
+                       const SizedBox(width: 8),
+                      ChoiceChip(
+                        label: const Text('Choice'),
+                        selected: _leaveType == LeaveType.choice,
+                        selectedColor: theme.primaryColor,
+                        onSelected: (selected) {
+                          setState(() {
+                            _leaveType = selected ? LeaveType.choice : LeaveType.none;
+                            _selectedSingleDate = null;
+                            _selectedLongLeaveDates.clear();
+                            if (selected) {
+                              _showChoiceInfoPopup();
+                            }
                           });
                         },
                       ),
@@ -368,27 +418,9 @@ class _LeavePlannerScreenState extends State<LeavePlannerScreen> {
                   SizedBox(
                     width: double.infinity,
                     child: ElevatedButton(
-                      style: ElevatedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(vertical: 16),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                      ),
-                      onPressed: (_selectedSingleDate != null || _selectedLongLeaveDates.isNotEmpty) && !_isLoading
-                          ? _analyzeLeave
-                          : null,
+                      style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 16), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
+                      onPressed: (_selectedSingleDate != null || _selectedLongLeaveDates.isNotEmpty || _choiceDates.isNotEmpty) && !_isLoading ? _analyzeLeave : null,
                       child: const Text('Analyze Leave Impact'),
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  SizedBox(
-                    width: double.infinity,
-                    child: OutlinedButton(
-                      style: OutlinedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(vertical: 16),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                        side: BorderSide(color: theme.primaryColor),
-                      ),
-                      onPressed: !_isLoading ? _suggestSafeLeave : null,
-                      child: const Text('Suggest a Safe Leave'),
                     ),
                   ),
                   const SizedBox(height: 24),
@@ -405,21 +437,209 @@ class _LeavePlannerScreenState extends State<LeavePlannerScreen> {
     );
   }
 
+   Widget _buildCurrentStats(ThemeData theme, DateTime lastSemDate, double bio, double classAvg) {
+    return Container(
+      padding: const EdgeInsets.all(12.0),
+      decoration: BoxDecoration(
+        color: theme.cardColor.withAlpha(100),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text('End of Sem:', style: theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.bold)),
+              Text(DateFormat('d MMM, yyyy').format(lastSemDate), style: theme.textTheme.bodyMedium),
+            ],
+          ),
+          const Divider(height: 16, thickness: 0.5),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceAround,
+            children: [
+              _buildMiniPercentageItem('Bio Avg', bio),
+              _buildMiniPercentageItem('Class Avg', classAvg),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildAnalysisResultWidget() {
     final theme = Theme.of(context);
     if (_analysisData!.containsKey('error')) {
       return _buildErrorCard(theme, _analysisData!['error']);
     }
 
-    if (_analysisData!['type'] == 'suggestion') {
-      final impacts = _analysisData!['impacts'] as List<dynamic>;
-      if (impacts.isEmpty) {
-        return _buildErrorCard(theme, _analysisData!['reason'] ?? 'No suitable leave day found.');
-      }
-      return _buildSuggestionCard(theme, impacts, _analysisData!['reason']);
+    if (_analysisData!['type'] == 'analysis') {
+      final dailyBreakdown = _analysisData!['daily_breakdown'] as List<dynamic>;
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (dailyBreakdown.isNotEmpty)
+            ...[
+              const Text('Day-by-Day Simulation', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 8),
+              ...dailyBreakdown.map((dayData) => _buildDailyImpactCard(dayData)),
+              const SizedBox(height: 16),
+            ],
+          const Text('Final Projected Impact', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 8),
+          _buildFinalSummaryCard(_analysisData!),
+        ],
+      );
     }
 
-    return _buildAnalysisCard(theme);
+    return const SizedBox.shrink();
+  }
+
+  Widget _buildDailyImpactCard(Map<String, dynamic> dayData) {
+    final theme = Theme.of(context);
+    final isAbsent = dayData['status'] == 'Absent';
+    final cardColor = isAbsent ? Colors.red.withAlpha(38) : Colors.green.withAlpha(38);
+    final statusText = isAbsent ? 'Leave Day (Assumed Absent)' : 'Assumed Present';
+    final subjects = dayData['subjects'] as Map<String, dynamic>;
+
+    return Card(
+      margin: const EdgeInsets.only(bottom: 12),
+      color: cardColor,
+      elevation: 0,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      clipBehavior: Clip.antiAlias,
+      child: ExpansionTile(
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(DateFormat('MMM d, EEEE').format(dayData['date']), style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+            Text(statusText, style: TextStyle(fontSize: 12, color: isAbsent ? Colors.red.shade700 : Colors.green.shade800, fontWeight: FontWeight.bold)),
+          ],
+        ),
+        subtitle: Padding(
+          padding: const EdgeInsets.only(top: 8.0),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+            children: [
+              _buildMiniPercentageItem('Biometric', dayData['bio_percent'] as double),
+              _buildMiniPercentageItem('Class Avg', dayData['class_percent'] as double),
+            ],
+          ),
+        ),
+        children: subjects.isEmpty ? [Padding(padding: const EdgeInsets.all(16.0), child: Text("No Classes Today", style: theme.textTheme.bodyMedium))] : [
+          const Divider(height: 1, thickness: 0.5),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 12.0),
+            child: Column(
+              children: subjects.entries.map((entry) {
+                return Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 3.0),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Expanded(child: Text(entry.key, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 12))),
+                      Text('${(entry.value as double).toStringAsFixed(1)}%', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                    ],
+                  ),
+                );
+              }).toList(),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildFinalSummaryCard(Map<String, dynamic> analysisData) {
+    final theme = Theme.of(context);
+    return Card(
+      color: theme.colorScheme.primaryContainer,
+      elevation: 2,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          children: [
+            Text('After ${DateFormat('MMM d').format(analysisData['last_date'])}, your final projected attendance will be:', textAlign: TextAlign.center, style: TextStyle(color: theme.colorScheme.onPrimaryContainer, fontWeight: FontWeight.bold, fontSize: 16)),
+            const SizedBox(height: 16),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              children: [
+                _buildMiniPercentageItem('Biometric', analysisData['finalBio'] as double, before: analysisData['initialBio'] as double, color: theme.colorScheme.onPrimaryContainer, isFinal: true),
+                _buildMiniPercentageItem('Class Avg', analysisData['finalClass'] as double, before: analysisData['initialClass'] as double, color: theme.colorScheme.onPrimaryContainer, isFinal: true),
+              ],
+            ),
+            const Divider(height: 24, thickness: 0.5, indent: 20, endIndent: 20),
+            ..._buildSubjectBreakdown(analysisData, theme)
+          ],
+        ),
+      ),
+    );
+  }
+
+  List<Widget> _buildSubjectBreakdown(Map<String, dynamic> analysisData, ThemeData theme) {
+    final initialSubjects = Map<String, double>.from(analysisData['initialSubjects']);
+    final finalSubjects = Map<String, double>.from(analysisData['finalSubjects']);
+    List<Widget> subjectWidgets = [];
+
+    for (var subjectName in initialSubjects.keys) {
+      final initialPercent = initialSubjects[subjectName]!;
+      final finalPercent = finalSubjects[subjectName]!;
+      final diff = finalPercent - initialPercent;
+
+      IconData? arrowIcon;
+      Color? arrowColor;
+      if (diff > 0.01) { arrowIcon = Icons.arrow_upward; arrowColor = Colors.green.shade400; }
+      else if (diff < -0.01) { arrowIcon = Icons.arrow_downward; arrowColor = Colors.red.shade400; }
+
+      subjectWidgets.add(
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: 4.0),
+          child: Row(
+            children: [
+              Expanded(flex: 3, child: Text(subjectName, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 12, color: theme.colorScheme.onPrimaryContainer))),
+              Expanded(flex: 2, child: Text('${initialPercent.toStringAsFixed(1)}% → ${finalPercent.toStringAsFixed(1)}%', textAlign: TextAlign.right, style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: theme.colorScheme.onPrimaryContainer))),
+              SizedBox(
+                width: 30,
+                child: arrowIcon != null ? Icon(arrowIcon, color: arrowColor, size: 16) : const SizedBox(),
+              )
+            ],
+          ),
+        )
+      );
+    }
+    return subjectWidgets;
+  }
+
+
+  Widget _buildMiniPercentageItem(String label, double value, {double? before, Color? color, bool isFinal = false}) {
+    final theme = Theme.of(context);
+    final valueStyle = isFinal ? theme.textTheme.headlineMedium : theme.textTheme.titleLarge;
+    final diff = before != null ? value - before : null;
+    
+    IconData? arrow;
+    Color? arrowColor;
+    if (diff != null) {
+      if (diff > 0.01) { arrow = Icons.arrow_upward; arrowColor = Colors.green.shade300; }
+      else if (diff < -0.01) { arrow = Icons.arrow_downward; arrowColor = Colors.red.shade300; }
+    }
+
+    return Column(
+      children: [
+        Text(label, style: theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.bold, color: color)),
+        const SizedBox(height: 4),
+        Row(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            Text('${value.toStringAsFixed(2)}%', style: valueStyle?.copyWith(color: color, fontWeight: FontWeight.bold)),
+            if(arrow != null) ...[
+              const SizedBox(width: 4),
+              Icon(arrow, color: arrowColor, size: isFinal ? 24: 20)
+            ]
+          ],
+        )
+      ],
+    );
   }
 
   Widget _buildErrorCard(ThemeData theme, String error) {
@@ -427,146 +647,8 @@ class _LeavePlannerScreenState extends State<LeavePlannerScreen> {
       color: theme.colorScheme.errorContainer.withAlpha(100),
       child: Padding(
         padding: const EdgeInsets.all(16.0),
-        child: Row(
-          children: [
-            Icon(Icons.error_outline, color: theme.colorScheme.onErrorContainer),
-            const SizedBox(width: 12),
-            Expanded(child: Text(error, style: TextStyle(color: theme.colorScheme.onErrorContainer))),
-          ],
-        ),
+        child: Row(children: [Icon(Icons.error_outline, color: theme.colorScheme.onErrorContainer), const SizedBox(width: 12), Expanded(child: Text(error, style: TextStyle(color: theme.colorScheme.onErrorContainer)))]),
       ),
-    );
-  }
-
-  Widget _buildSuggestionCard(ThemeData theme, List<dynamic> impacts, String reason) {
-  final bestDay = impacts.first;
-  final otherDays = impacts.skip(1).take(3); // Show the next 3 best options
-
-  return Card(
-    child: Padding(
-      padding: const EdgeInsets.all(16.0),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text('Safe Leave Suggestions', style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold)),
-          const SizedBox(height: 12),
-          
-          // Best day display
-          Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: theme.colorScheme.primaryContainer.withOpacity(0.5),
-              borderRadius: BorderRadius.circular(12)
-            ),
-            child: Row(
-              children: [
-                Icon(Icons.calendar_today, color: theme.colorScheme.primary, size: 32),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(DateFormat.MMMEd().format(bestDay['date']), style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold, color: theme.colorScheme.primary)),
-                      Text(bestDay['impact'] == 0.0 ? 'No classes this day' : 'Overall attendance drops by ${bestDay['impact'].toStringAsFixed(2)}%', style: theme.textTheme.bodyMedium, overflow: TextOverflow.ellipsis),
-                    ],
-                  ),
-                ),
-                 Icon(Icons.check_circle, color: Colors.green.shade400, size: 28),
-              ],
-            ),
-          ),
-          const SizedBox(height: 16),
-          const Divider(),
-          const Padding(
-            padding: EdgeInsets.symmetric(vertical: 8.0),
-            child: Text('Other Options', style: TextStyle(fontWeight: FontWeight.bold)),
-          ),
-          // Other options
-          ...otherDays.map((day) => Padding(
-            padding: const EdgeInsets.only(bottom: 8.0),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text(DateFormat.MMMEd().format(day['date']), style: theme.textTheme.bodyLarge),
-                Text('${day['impact'].toStringAsFixed(2)}% drop', style: theme.textTheme.bodyLarge?.copyWith(color: theme.colorScheme.error)),
-              ],
-            ),
-          ))
-        ],
-      ),
-    ),
-  );
-}
-
-  Widget _buildAnalysisCard(ThemeData theme) {
-    final subjects = _analysisData!['subjects'] as List<Map<String, dynamic>>;
-    return Column(
-      children: [
-        _buildImpactCard(theme,
-          title: 'Biometric',
-          icon: Icons.fingerprint,
-          initial: _analysisData!['initialBio'],
-          projected: _analysisData!['projectedBio'],
-        ),
-        const SizedBox(height: 16),
-        _buildImpactCard(theme,
-          title: 'Class Average',
-          icon: Icons.school_outlined,
-          initial: _analysisData!['initialClass'],
-          projected: _analysisData!['projectedClass'],
-        ),
-        if (subjects.isNotEmpty) ...[
-          const Padding(
-            padding: EdgeInsets.symmetric(vertical: 16.0),
-            child: Divider(),
-          ),
-          ...subjects.map((s) => _buildImpactCard(theme,
-            title: s['name'],
-            icon: Icons.class_outlined,
-            initial: s['initial'],
-            projected: s['projected'],
-          )),
-        ]
-      ],
-    );
-  }
-
-  Widget _buildImpactCard(ThemeData theme, {required String title, required IconData icon, required double initial, required double projected}) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Icon(icon, color: theme.primaryColor, size: 24),
-                const SizedBox(width: 8),
-                Expanded(child: Text(title, style: theme.textTheme.titleMedium, overflow: TextOverflow.ellipsis)),
-              ],
-            ),
-            const SizedBox(height: 16),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-              children: [
-                _buildPercentageItem(theme, 'Before', initial, Colors.grey.shade400),
-                const Icon(Icons.arrow_forward_rounded, size: 24, color: Colors.grey),
-                _buildPercentageItem(theme, 'After', projected, projected < 75 ? theme.colorScheme.error : Colors.green.shade400),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildPercentageItem(ThemeData theme, String label, double value, Color color) {
-    return Column(
-      children: [
-        Text('${value.toStringAsFixed(2)}%', style: theme.textTheme.headlineSmall?.copyWith(color: color, fontWeight: FontWeight.bold)),
-        const SizedBox(height: 4),
-        Text(label, style: theme.textTheme.bodyMedium?.copyWith(color: Colors.grey.shade400)),
-      ],
     );
   }
 
@@ -576,48 +658,29 @@ class _LeavePlannerScreenState extends State<LeavePlannerScreen> {
     return Material(
       color: theme.cardColor.withAlpha(isEnabled ? 178 : 51),
       borderRadius: BorderRadius.circular(16),
-      child: AbsorbPointer(
+      child: GestureDetector(
+        onTap: () {
+          if (_leaveType == LeaveType.none) {
+            _showSelectOptionPopup();
+          }
+        },
+        child: AbsorbPointer(
         absorbing: !isEnabled,
         child: Padding(
           padding: const EdgeInsets.all(12.0),
-          child: Column(
-            children: [
-              _buildCalendarHeader(theme, firstDate, lastDate),
-              const SizedBox(height: 8),
-              _buildCalendarGrid(theme, firstDate, lastDate),
-            ],
-          ),
+          child: Column(children: [_buildCalendarHeader(theme, firstDate, lastDate), const SizedBox(height: 8), _buildCalendarGrid(theme, firstDate, lastDate)]),
         ),
       ),
-    );
+    ));
   }
 
   Widget _buildCalendarHeader(ThemeData theme, DateTime firstDate, DateTime lastDate) {
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
-        IconButton(
-          icon: const Icon(Icons.chevron_left),
-          onPressed: () {
-            if (_displayedMonth.year == firstDate.year && _displayedMonth.month == firstDate.month) return;
-            setState(() {
-              _displayedMonth = DateTime(_displayedMonth.year, _displayedMonth.month - 1);
-            });
-          },
-        ),
-        Text(
-          DateFormat.yMMMM().format(_displayedMonth),
-          style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
-        ),
-        IconButton(
-          icon: const Icon(Icons.chevron_right),
-          onPressed: () {
-            if (_displayedMonth.year == lastDate.year && _displayedMonth.month == lastDate.month) return;
-            setState(() {
-              _displayedMonth = DateTime(_displayedMonth.year, _displayedMonth.month + 1);
-            });
-          },
-        ),
+        IconButton(icon: const Icon(Icons.chevron_left), onPressed: () { if (_displayedMonth.year == firstDate.year && _displayedMonth.month == firstDate.month) return; setState(() { _displayedMonth = DateTime(_displayedMonth.year, _displayedMonth.month - 1); }); }),
+        Text(DateFormat.yMMMM().format(_displayedMonth), style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold)),
+        IconButton(icon: const Icon(Icons.chevron_right), onPressed: () { if (_displayedMonth.year == lastDate.year && _displayedMonth.month == lastDate.month) return; setState(() { _displayedMonth = DateTime(_displayedMonth.year, _displayedMonth.month + 1); }); }),
       ],
     );
   }
@@ -630,65 +693,55 @@ class _LeavePlannerScreenState extends State<LeavePlannerScreen> {
     final List<Widget> dayWidgets = [];
     final dayLabels = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
     for (int i = 0; i < dayLabels.length; i++) {
-      dayWidgets.add(Center(
-        child: Text(
-          dayLabels[i],
-          style: theme.textTheme.bodySmall?.copyWith(
-            color: i == 0 ? Colors.red.shade300 : theme.textTheme.bodySmall?.color?.withAlpha(153),
-          ),
-        ),
-      ));
+      dayWidgets.add(Center(child: Text(dayLabels[i], style: theme.textTheme.bodySmall?.copyWith(color: i == 0 ? Colors.red.shade300 : theme.textTheme.bodySmall?.color?.withAlpha(153)))));
     }
 
-    for (int i = 0; i < weekDayOfFirstDay; i++) {
-      dayWidgets.add(Container());
-    }
+    for (int i = 0; i < weekDayOfFirstDay; i++) { dayWidgets.add(Container()); }
 
     for (int i = 1; i <= daysInMonth; i++) {
       final date = DateTime(_displayedMonth.year, _displayedMonth.month, i);
       final bool isSunday = date.weekday == DateTime.sunday;
       final bool isPast = date.isBefore(firstDate);
-      final bool isSelectable = !isSunday && !isPast && !date.isAfter(lastDate);
+      final bool isAfterSem = date.isAfter(lastDate);
+      final bool isSelectable = !isSunday && !isPast && !isAfterSem;
 
       bool isSelected = false;
+      Color? selectionColor;
+
       if (isSelectable) {
         if (_leaveType == LeaveType.single) {
           isSelected = _selectedSingleDate != null && DateUtils.isSameDay(date, _selectedSingleDate);
+          if (isSelected) selectionColor = theme.primaryColor;
         } else if (_leaveType == LeaveType.long) {
           isSelected = _selectedLongLeaveDates.any((d) => DateUtils.isSameDay(date, d));
+          if (isSelected) selectionColor = theme.primaryColor;
+        } else if (_leaveType == LeaveType.choice) {
+          if (_choiceDates.containsKey(date)) {
+            isSelected = true;
+            selectionColor = _choiceDates[date] == 1 ? Colors.green : Colors.red;
+          }
         }
       }
 
       Color dayColor;
-      if (isSunday) {
-        dayColor = Colors.red.shade300;
-      } else if (isPast) {
-        dayColor = Colors.grey.shade700;
-      } else if (isSelected) {
-        dayColor = Colors.white;
-      } else {
-        dayColor = theme.textTheme.bodyLarge?.color ?? Colors.white;
-      }
+      if (isSunday) { dayColor = Colors.red.shade300; }
+      else if (isPast) { dayColor = Colors.grey.shade700; }
+      else if (isAfterSem) { dayColor = (theme.textTheme.bodyLarge?.color ?? Colors.white).withAlpha(100); }
+      else if (isSelected) { dayColor = Colors.white; }
+      else { dayColor = theme.textTheme.bodyLarge?.color ?? Colors.white; }
 
       dayWidgets.add(
         GestureDetector(
           onTap: isSelectable ? () => _handleDateSelection(date) : null,
           child: Container(
             alignment: Alignment.center,
-            decoration: isSelected
-                ? BoxDecoration(color: theme.primaryColor, shape: BoxShape.circle)
-                : null,
+            decoration: isSelected ? BoxDecoration(color: selectionColor, shape: BoxShape.circle) : null,
             child: Text(i.toString(), style: TextStyle(color: dayColor)),
           ),
         ),
       );
     }
 
-    return GridView.count(
-      crossAxisCount: 7,
-      shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
-      children: dayWidgets,
-    );
+    return GridView.count(crossAxisCount: 7, shrinkWrap: true, physics: const NeverScrollableScrollPhysics(), children: dayWidgets);
   }
 }

@@ -50,6 +50,12 @@ class ApiService {
     return json.decode(response.body);
   }
 
+  Future<Map<String, dynamic>> fetchAttendanceRegister() async {
+    final response = await http.get(Uri.parse('$apiUrl/api/attendance_register/$username'), headers: _headers).timeout(const Duration(seconds: 20));
+    if (response.statusCode != 200) throw Exception('Failed to load attendance register');
+    return json.decode(response.body);
+  }
+
   Future<Map<String, dynamic>> fetchLeavePlannerData() async {
     final results = await Future.wait([
       fetchAttendance(),

@@ -4,11 +4,13 @@ import 'package:provider/provider.dart';
 
 import '../providers/auth_provider.dart';
 import '../providers/notification_provider.dart';
+import '../providers/attendance_register_provider.dart';
+import '../services/api_service.dart';
 import '../widgets/themed_background.dart';
 import 'home_screen.dart';
 import 'lab_screen.dart';
 import 'notifications_screen.dart';
-import 'attendance_screen.dart';
+import 'attendance_register_screen.dart';
 import 'settings_screen.dart';
 import 'login_screen.dart';
 import 'profile_screen.dart';
@@ -22,40 +24,44 @@ class DashboardScreen extends StatefulWidget {
 
 class _DashboardScreenState extends State<DashboardScreen> {
   int _selectedIndex = 0;
-  bool _isLocked = true; // ADDED: Controls the locked/blurred state
+  bool _isLocked = true;
 
   static const List<Widget> _widgetOptions = <Widget>[
     HomeScreen(),
     LabScreen(),
     NotificationsScreen(),
-    AttendanceScreen(),
+    AttendanceRegisterScreen(),
     SettingsScreen(),
   ];
 
   @override
   void initState() {
     super.initState();
-    // ADDED: Attempt to unlock the screen as soon as it's built.
     _authenticateToUnlock();
   }
 
-  // ADDED: Method to handle the biometric authentication logic.
   Future<void> _authenticateToUnlock() async {
     final authProvider = Provider.of<AuthProvider>(context, listen: false);
     final success = await authProvider.authenticateOnDemand();
 
     if (mounted) {
       if (success) {
-        // On successful authentication, unlock the screen.
         setState(() {
           _isLocked = false;
         });
+        // Fetch data after successful authentication
+        final apiService = ApiService(
+          apiUrl: authProvider.apiUrl,
+          username: authProvider.username!,
+          token: authProvider.token!,
+        );
+        Provider.of<AttendanceRegisterProvider>(context, listen: false)
+            .fetchAttendanceData(apiService);
       } else {
-        // If the user cancels or authentication fails, log them out and go to the login screen.
         await authProvider.logout();
         Navigator.of(context).pushAndRemoveUntil(
           MaterialPageRoute(builder: (context) => const LoginScreen()),
-          (Route<dynamic> route) => false,
+              (Route<dynamic> route) => false,
         );
       }
     }
@@ -74,10 +80,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
 
-    // ADDED: A Stack to layer the blur and unlock UI over your existing screen.
     return Stack(
       children: [
-        // This is your original UI. It will not be changed.
         ThemedBackground(
           child: Scaffold(
             backgroundColor: Colors.transparent,
@@ -94,8 +98,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
             bottomNavigationBar: _buildBottomNavBar(theme),
           ),
         ),
-
-        // ADDED: This is the blur overlay. It only appears when the screen is locked.
         if (_isLocked)
           BackdropFilter(
             filter: ImageFilter.blur(sigmaX: 10.0, sigmaY: 10.0),
@@ -124,8 +126,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  // --- Your existing code below this line is unchanged --- 
-
   Widget _buildHeader(BuildContext context, ThemeData theme) {
     final authProvider = Provider.of<AuthProvider>(context);
     return Row(
@@ -151,7 +151,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
           onPressed: () {
             authProvider.logout();
             Navigator.of(context).pushAndRemoveUntil(
-              MaterialPageRoute(builder: (ctx) => const LoginScreen()), (route) => false);
+                MaterialPageRoute(builder: (ctx) => const LoginScreen()), (route) => false);
           },
         ),
       ],
@@ -184,7 +184,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 _buildNavItem(theme, icon: Icons.home_rounded, label: 'Home', index: 0),
                 _buildNavItem(theme, icon: Icons.science_outlined, label: 'Labs', index: 1),
                 _buildNavItem(theme, icon: Icons.notifications_outlined, label: 'Notify', index: 2, hasBadge: true),
-                _buildNavItem(theme, icon: Icons.pie_chart_outline_rounded, label: 'Attendance', index: 3),
+                _buildNavItem(theme, icon: Icons.app_registration, label: 'Register', index: 3),
                 _buildNavItem(theme, icon: Icons.settings_outlined, label: 'Settings', index: 4),
               ],
             ),

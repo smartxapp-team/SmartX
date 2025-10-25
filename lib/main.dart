@@ -5,6 +5,7 @@ import 'providers/auth_provider.dart';
 import 'providers/theme_provider.dart';
 import 'providers/notification_provider.dart';
 import 'providers/profile_provider.dart';
+import 'providers/attendance_register_provider.dart'; // Import the new provider
 import 'screens/splash_screen.dart';
 import 'services/notification_service.dart';
 import 'theme/app_theme.dart';
@@ -26,6 +27,7 @@ class MyApp extends StatelessWidget {
         ChangeNotifierProvider(create: (_) => ThemeProvider()),
         ChangeNotifierProvider(create: (_) => NotificationProvider()),
         ChangeNotifierProvider(create: (_) => ProfileProvider()),
+        ChangeNotifierProvider(create: (_) => AttendanceRegisterProvider()), // Add the new provider
       ],
       child: Consumer<ThemeProvider>(
         builder: (context, themeProvider, child) {

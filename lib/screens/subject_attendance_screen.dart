@@ -214,66 +214,140 @@ class _SubjectAttendanceScreenState extends State<SubjectAttendanceScreen> {
     );
   }
 
+  Widget _buildInfoCard(ThemeData theme, {required String emoji, required String title, required String value, required Color color}) {
+    return Card(
+      color: color.withOpacity(0.2),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      elevation: 0,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 12.0),
+        child: Row(
+          children: [
+            Text(emoji, style: const TextStyle(fontSize: 24)),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(title, style: theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.bold)),
+            ),
+            Text(value, style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold)),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildOverallHeader(double percentage, int attended, int conducted, ThemeData theme) {
     final status = _getAttendanceStatus(percentage);
+    final absent = conducted - attended;
+
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 16.0),
+      padding: const EdgeInsets.all(16.0),
       child: Column(
         children: [
           if (_isBunkMode)
             Padding(
-              padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
+              padding: const EdgeInsets.fromLTRB(8, 0, 8, 16),
               child: Column(
                 children: [
-                  Text(
-                    'Set Attendance Threshold: ${_threshold.toInt()}%',
-                    style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      IconButton(
+                        icon: const Icon(Icons.arrow_back_ios),
+                        onPressed: () {
+                          setState(() {
+                            _threshold = (_threshold - 1).clamp(50.0, 100.0);
+                          });
+                        },
+                      ),
+                      Expanded(
+                        child: Text(
+                          'Set Attendance Threshold: ${_threshold.toInt()}%',
+                          style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+                          textAlign: TextAlign.center,
+                        ),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.arrow_forward_ios),
+                        onPressed: () {
+                          setState(() {
+                            _threshold = (_threshold + 1).clamp(50.0, 100.0);
+                          });
+                        },
+                      ),
+                    ],
                   ),
                   Slider(
                     value: _threshold,
                     min: 50,
                     max: 100,
-                    divisions: 10,
+                    divisions: 50,
                     label: '${_threshold.toInt()}%',
                     activeColor: theme.colorScheme.primary,
                     inactiveColor: theme.colorScheme.primary.withOpacity(0.3),
-                    onChanged: (value) => setState(() => _threshold = value),
+                    onChanged: (value) {
+                      setState(() {
+                        _threshold = value.roundToDouble();
+                      });
+                    },
                   ),
                 ],
               ),
             ),
-          SizedBox(
-            width: 150,
-            height: 150,
-            child: Stack(
-              fit: StackFit.expand,
-              children: [
-                CircularProgressIndicator(
-                  value: percentage / 100,
-                  strokeWidth: 10,
-                  backgroundColor: status.color.withOpacity(0.2),
-                  valueColor: AlwaysStoppedAnimation<Color>(status.color),
-                ),
-                Center(
-                  child: Text(
-                    '${percentage.toStringAsFixed(1)}%',
-                    style: theme.textTheme.headlineMedium?.copyWith(
-                      fontWeight: FontWeight.bold,
-                      color: theme.colorScheme.onSurface,
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Expanded(
+                flex: 2,
+                child: Column(
+                  children: [
+                    SizedBox(
+                      width: 120,
+                      height: 120,
+                      child: Stack(
+                        fit: StackFit.expand,
+                        children: [
+                          CircularProgressIndicator(
+                            value: percentage / 100,
+                            strokeWidth: 10,
+                            backgroundColor: status.color.withOpacity(0.2),
+                            valueColor: AlwaysStoppedAnimation<Color>(status.color),
+                          ),
+                          Center(
+                            child: Text(
+                              '${percentage.toStringAsFixed(1)}%',
+                              style: theme.textTheme.headlineSmall?.copyWith(
+                                fontWeight: FontWeight.bold,
+                                color: theme.colorScheme.onSurface,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
-                  ),
+                    const SizedBox(height: 8),
+                    Text('Overall Attendance', style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold), textAlign: TextAlign.center,),
+                  ],
                 ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 16),
-          Text(
-            'Overall Attendance',
-            style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                flex: 3,
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    _buildInfoCard(theme, emoji: '📚', title: 'Total', value: conducted.toString(), color: theme.colorScheme.primary),
+                    const SizedBox(height: 8),
+                    _buildInfoCard(theme, emoji: '✅', title: 'Present', value: attended.toString(), color: Colors.green.shade400),
+                    const SizedBox(height: 8),
+                    _buildInfoCard(theme, emoji: '❌', title: 'Absent', value: absent.toString(), color: Colors.red.shade400),
+                  ],
+                ),
+              ),
+            ],
           ),
           if (_isBunkMode)
             Padding(
-              padding: const EdgeInsets.only(top: 8.0),
+              padding: const EdgeInsets.only(top: 24.0, left: 16.0, right: 16.0),
               child: Text(
                 _calculateBunkMessage(attended, conducted, isOverall: true),
                 style: theme.textTheme.titleMedium?.copyWith(

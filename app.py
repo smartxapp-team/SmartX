@@ -81,6 +81,8 @@ def fetch_secure_page(session_cookies, url):
 # 2. SCRAPING LOGIC & HELPERS
 # =======================================================
 
+
+
 def get_branch_acronym(branch_name):
     branch_map = {
         "COMPUTER SCIENCE AND ENGINEERING": "CSE",
@@ -128,7 +130,7 @@ def scrape_profile_details(username, session_cookies):
             batch = f"{joining_year}-{joining_year + 4}"
         except (ValueError, IndexError):
             batch = 'N/A'
-        
+
         year_sem_raw = find_detail('Year/Sem')
         def format_year_sem(raw_str):
             if raw_str == 'N/A' or 'B.Tech' not in raw_str:
@@ -230,7 +232,6 @@ def fetch_attendance(username, session_cookies):
 
     except Exception as e:
         return {"error": f"Failed to parse attendance HTML: {e}"}
-
 
 def fetch_timetable(username, session_cookies):
     cached_data = get_data_from_cache(username, 'tt')
@@ -492,6 +493,76 @@ def fetch_results(username, session_cookies):
     except Exception as e:
         return {"error": f"Failed to parse results HTML: {e}"}
 
+def fetch_attendance_register(username, session_cookies):
+    cached_data = get_data_from_cache(username, 'attendance_register')
+    if cached_data:
+        return cached_data
+
+    status, response = fetch_secure_page(session_cookies, 'https://samvidha.iare.ac.in/home?action=course_content')
+    if status != "SUCCESS":
+        return {"error": status}
+
+    try:
+        soup = BeautifulSoup(response.text, 'lxml')
+        table = soup.find('table', class_='table-sm')
+        if not table or not table.tbody:
+            return {"error": "Could not find attendance register table."}
+
+        all_subjects = set()
+        all_dates = set()
+        attendance_data = {}
+        current_subject = None
+
+        rows = table.tbody.find_all('tr')
+        for row in rows:
+            header_cell = row.find('th', class_='bg-pink')
+            if header_cell:
+                full_subject_name = header_cell.get_text(strip=True).split('-', 1)[-1].strip()
+                current_subject = full_subject_name
+                if current_subject not in attendance_data:
+                    attendance_data[current_subject] = {}
+                    all_subjects.add(current_subject)
+                continue
+
+            cells = row.find_all('td')
+            if len(cells) >= 5 and current_subject:
+                date_str = cells[1].get_text(strip=True)
+                status = cells[4].get_text(strip=True)
+                if date_str and status in ('PRESENT', 'ABSENT'):
+                    try:
+                        date_obj = datetime.strptime(date_str, '%d %b, %Y')
+                        formatted_date = date_obj.strftime('%Y-%m-%d')
+                        all_dates.add(formatted_date)
+                        if formatted_date not in attendance_data[current_subject]:
+                            attendance_data[current_subject][formatted_date] = []
+                        attendance_data[current_subject][formatted_date].append(status)
+                    except ValueError:
+                        continue
+
+        sorted_subjects = sorted(list(all_subjects))
+        sorted_dates = sorted(list(all_dates), reverse=True)
+
+        final_register = {}
+        for subject in sorted_subjects:
+            final_register[subject] = []
+            for date in sorted_dates:
+                status_list = attendance_data.get(subject, {}).get(date, 'N/A')
+                final_register[subject].append(status_list)
+
+        result = {
+            "subjects": sorted_subjects,
+            "dates": sorted_dates,
+            "register": final_register
+        }
+
+        set_data_in_cache(username, 'attendance_register', result)
+        return result
+    except Exception as e:
+        import traceback
+        print(traceback.format_exc())
+        return {"error": f"Failed to parse attendance register: {e}"}
+
+
 # =======================================================
 # 3. API ENDPOINTS FOR FLUTTER APP
 # =======================================================
@@ -510,8 +581,15 @@ def api_login():
     session_data = perform_login(username, password)
     if session_data:
         SESSIONS_CACHE[username] = session_data
+
+        # Fetch profile details to get full_name and profile_pic_url
+        profile_details = scrape_profile_details(username, session_data['cookies'])
+
+        full_name = profile_details.get('full_name', username)
+        profile_pic_url = profile_details.get('profile_pic_url')
+
         access_token = create_access_token(identity=username)
-        return jsonify({"message": "Login successful", "username": username, "token": access_token})
+        return jsonify({"message": "Login successful", "username": username, "token": access_token, "fullName": full_name, "profilePictureUrl": profile_pic_url})
     else:
         return jsonify({"error": "Invalid credentials"}), 401
 
@@ -635,11 +713,19 @@ def api_lab_courses(username):
 def api_lab_details(username, course_code):
     session_data = SESSIONS_CACHE.get(username)
     if not session_data: return jsonify({"error": "User not logged in"}), 401
-    lab_data = fetch_lab_deadlines_data(session_data['cookies'], username)
+    lab_data = fetch_lab_deadlines_data(session_cookies, username)
     if 'error' in lab_data: return jsonify(lab_data), 500
     course_details = lab_data.get(course_code)
     if not course_details: return jsonify({"error": "Invalid course code"}), 404
     return jsonify(course_details)
+
+@app.route('/api/attendance_register/<username>')
+def api_attendance_register(username):
+    session_data = SESSIONS_CACHE.get(username)
+    if not session_data:
+        return jsonify({"error": "User not logged in or session expired"}), 401
+    return jsonify(fetch_attendance_register(username, session_data['cookies']))
+
 
 # --- MAIN RUN BLOCK ---
 if __name__ == '__main__':
