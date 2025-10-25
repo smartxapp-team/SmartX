@@ -24,7 +24,7 @@ class DashboardScreen extends StatefulWidget {
 
 class _DashboardScreenState extends State<DashboardScreen> {
   int _selectedIndex = 0;
-  bool _isLocked = true;
+  late bool _isLocked;
 
   static const List<Widget> _widgetOptions = <Widget>[
     HomeScreen(),
@@ -37,7 +37,27 @@ class _DashboardScreenState extends State<DashboardScreen> {
   @override
   void initState() {
     super.initState();
-    _authenticateToUnlock();
+    final authProvider = Provider.of<AuthProvider>(context, listen: false);
+    _isLocked = authProvider.biometricEnabled;
+
+    if (_isLocked) {
+      _authenticateToUnlock();
+    } else {
+      _fetchData();
+    }
+  }
+
+  void _fetchData() {
+    final authProvider = Provider.of<AuthProvider>(context, listen: false);
+    if (authProvider.isLoggedIn && authProvider.username != null && authProvider.token != null) {
+      final apiService = ApiService(
+        apiUrl: authProvider.apiUrl,
+        username: authProvider.username!,
+        token: authProvider.token!,
+      );
+      Provider.of<AttendanceRegisterProvider>(context, listen: false)
+          .fetchAttendanceData(apiService);
+    }
   }
 
   Future<void> _authenticateToUnlock() async {
@@ -49,14 +69,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
         setState(() {
           _isLocked = false;
         });
-        // Fetch data after successful authentication
-        final apiService = ApiService(
-          apiUrl: authProvider.apiUrl,
-          username: authProvider.username!,
-          token: authProvider.token!,
-        );
-        Provider.of<AttendanceRegisterProvider>(context, listen: false)
-            .fetchAttendanceData(apiService);
+        _fetchData();
       } else {
         await authProvider.logout();
         Navigator.of(context).pushAndRemoveUntil(
@@ -138,10 +151,15 @@ class _DashboardScreenState extends State<DashboardScreen> {
               CircleAvatar(
                 radius: 18,
                 backgroundColor: theme.colorScheme.primary.withOpacity(0.1),
-                child: Icon(Icons.person_outline, color: theme.colorScheme.primary, size: 20),
+                backgroundImage: authProvider.profilePictureUrl != null
+                    ? NetworkImage(authProvider.profilePictureUrl!) as ImageProvider
+                    : null,
+                child: authProvider.profilePictureUrl == null
+                    ? Icon(Icons.person_outline, color: theme.colorScheme.primary, size: 20)
+                    : null,
               ),
               const SizedBox(width: 10),
-              Text(authProvider.username ?? 'Profile', style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold, color: theme.colorScheme.onBackground)),
+              Text(authProvider.fullName ?? authProvider.username ?? 'Profile', style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold, color: theme.colorScheme.onBackground)),
             ],
           ),
         ),

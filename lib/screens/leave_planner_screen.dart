@@ -7,7 +7,7 @@ import '../providers/auth_provider.dart';
 import '../services/api_service.dart';
 import '../widgets/themed_background.dart';
 
-enum LeaveType { none, single, long, choice }
+enum LeaveType { choice }
 
 class LeavePlannerScreen extends StatefulWidget {
   const LeavePlannerScreen({super.key});
@@ -18,9 +18,7 @@ class LeavePlannerScreen extends StatefulWidget {
 
 class _LeavePlannerScreenState extends State<LeavePlannerScreen> {
   Future<Map<String, dynamic>>? _leavePlannerFuture;
-  LeaveType _leaveType = LeaveType.none;
-  DateTime? _selectedSingleDate;
-  final List<DateTime> _selectedLongLeaveDates = [];
+  LeaveType _leaveType = LeaveType.choice; // Default to choice
   final Map<DateTime, int> _choiceDates = {};
   Map<String, dynamic>? _analysisData;
   bool _isLoading = false;
@@ -31,14 +29,10 @@ class _LeavePlannerScreenState extends State<LeavePlannerScreen> {
   void initState() {
     super.initState();
     _displayedMonth = DateTime.now();
-  }
-
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    if (_leavePlannerFuture == null) {
-      _fetchLeavePlannerData();
-    }
+    _fetchLeavePlannerData();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _showChoiceInfoPopup();
+    });
   }
 
   Future<void> _fetchLeavePlannerData() async {
@@ -66,23 +60,6 @@ class _LeavePlannerScreenState extends State<LeavePlannerScreen> {
   void _handleDateSelection(DateTime date) {
     setState(() {
       _analysisData = null;
-      if (_leaveType == LeaveType.single) {
-        _selectedSingleDate = (_selectedSingleDate == date) ? null : date;
-      } else if (_leaveType == LeaveType.long) {
-        if (_selectedLongLeaveDates.contains(date)) {
-          _selectedLongLeaveDates.remove(date);
-        } else {
-          _selectedLongLeaveDates.add(date);
-        }
-        _selectedLongLeaveDates.sort();
-      } else if (_leaveType == LeaveType.choice) {
-        _handleChoiceDateSelection(date);
-      }
-    });
-  }
-
-  void _handleChoiceDateSelection(DateTime date) {
-    setState(() {
       if (_choiceDates.containsKey(date)) {
         if (_choiceDates[date] == 1) {
           _choiceDates[date] = 2; // Double click -> Absent (red)
@@ -100,18 +77,20 @@ class _LeavePlannerScreenState extends State<LeavePlannerScreen> {
     final today = DateTime(now.year, now.month, now.day);
     DateTime firstSelectableDate = (now.hour >= 13) ? today.add(const Duration(days: 1)) : today;
 
-    if (_leaveType == LeaveType.choice) {
-      final dates = _choiceDates.keys.toList();
-      if (dates.isNotEmpty) {
-        dates.sort();
-        final lastSelected = dates.last;
-        for (var d = firstSelectableDate; d.isBefore(lastSelected); d = d.add(const Duration(days: 1))) {
-          if (d.weekday != DateTime.sunday && !_choiceDates.containsKey(d)) {
-            _showGapErrorPopup();
-            return;
-          }
+    final dates = _choiceDates.keys.toList();
+    if (dates.isNotEmpty) {
+      dates.sort();
+      final lastSelected = dates.last;
+      for (var d = firstSelectableDate; d.isBefore(lastSelected); d = d.add(const Duration(days: 1))) {
+        if (d.weekday != DateTime.sunday && !_choiceDates.containsKey(d)) {
+          _showGapErrorPopup();
+          return;
         }
       }
+    } else {
+      // If no dates are selected, show a message and prevent analysis
+      _showNoDateSelectedPopup();
+      return;
     }
 
     setState(() { _isLoading = true; _analysisData = null; });
@@ -144,30 +123,9 @@ class _LeavePlannerScreenState extends State<LeavePlannerScreen> {
       DateTime? lastDateForAnalysis;
       DateTime? firstDateForAnalysis;
 
-      if (_leaveType == LeaveType.choice) {
-        final choiceDatesSorted = _choiceDates.keys.toList()..sort();
-        if (choiceDatesSorted.isEmpty) {
-          if (mounted) setState(() => _isLoading = false);
-          return;
-        }
-        firstDateForAnalysis = firstSelectableDate;
-        lastDateForAnalysis = choiceDatesSorted.last;
-      } else {
-        List<DateTime> leaveDates = [];
-        if (_leaveType == LeaveType.single && _selectedSingleDate != null) {
-          leaveDates.add(_selectedSingleDate!);
-        } else if (_leaveType == LeaveType.long) {
-          leaveDates.addAll(_selectedLongLeaveDates);
-        }
-
-        if (leaveDates.isEmpty) {
-          if (mounted) setState(() => _isLoading = false);
-          return;
-        }
-        leaveDates.sort();
-        firstDateForAnalysis = today;
-        lastDateForAnalysis = leaveDates.last;
-      }
+      final choiceDatesSorted = _choiceDates.keys.toList()..sort();
+      firstDateForAnalysis = firstSelectableDate;
+      lastDateForAnalysis = choiceDatesSorted.last;
       
       for (var date = firstDateForAnalysis; !date.isAfter(lastDateForAnalysis); date = date.add(const Duration(days: 1))) {
         if (date.weekday == DateTime.sunday) continue;
@@ -175,23 +133,11 @@ class _LeavePlannerScreenState extends State<LeavePlannerScreen> {
         bool isLeaveDay = false;
         String status = 'Present';
 
-        if (_leaveType == LeaveType.choice) {
-          if (_choiceDates.containsKey(date)) {
-            isLeaveDay = _choiceDates[date] == 2;
-            status = isLeaveDay ? 'Absent' : 'Present';
-          } else {
-            // This case should be prevented by the validation logic, but as a fallback
-            continue;
-          }
-        } else {
-           List<DateTime> leaveDates = [];
-           if (_leaveType == LeaveType.single && _selectedSingleDate != null) {
-             leaveDates.add(_selectedSingleDate!);
-           } else if (_leaveType == LeaveType.long) {
-             leaveDates.addAll(_selectedLongLeaveDates);
-           }
-          isLeaveDay = leaveDates.any((d) => DateUtils.isSameDay(d, date)) || date.isAfter(today);
+        if (_choiceDates.containsKey(date)) {
+          isLeaveDay = _choiceDates[date] == 2;
           status = isLeaveDay ? 'Absent' : 'Present';
+        } else {
+          continue;
         }
         
         simulatedBioLog.add({'status': status});
@@ -274,12 +220,12 @@ class _LeavePlannerScreenState extends State<LeavePlannerScreen> {
     return totalConducted == 0 ? 100.0 : (totalAttended / totalConducted) * 100;
   }
   
-  void _showSelectOptionPopup() {
+  void _showNoDateSelectedPopup() {
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Select an Option'),
-        content: const Text('Please select a leave type before choosing dates.'),
+        title: const Text('No Dates Selected'),
+        content: const Text('Please select at least one date for analysis.'),
         actions: [
           TextButton(
             child: const Text('OK'),
@@ -294,8 +240,8 @@ class _LeavePlannerScreenState extends State<LeavePlannerScreen> {
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Choice Selection'),
-        content: const Text('1 click for Present (green)\n2 clicks for Absent (red)\n3 clicks to deselect.'),
+        title: const Text('Choice Selection Info'),
+        content: const Text('1 click for Present (🟢)\n2 clicks for Absent (🔴)\n3 clicks to deselect.'),
         actions: [
           TextButton(
             child: const Text('OK'),
@@ -311,7 +257,7 @@ class _LeavePlannerScreenState extends State<LeavePlannerScreen> {
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('Date Gap Detected'),
-        content: const Text('Please select a status for all previous days starting from the first available date.'),
+        content: const Text('Please select a status for all previous days starting from the first available date, without any gaps.'),
         actions: [
           TextButton(
             child: const Text('OK'),
@@ -366,51 +312,19 @@ class _LeavePlannerScreenState extends State<LeavePlannerScreen> {
                 children: [
                   _buildCurrentStats(theme, lastSelectableDate, initialBio, initialClass),
                   const SizedBox(height: 16),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      ChoiceChip(
-                        label: const Text('Single Leave'),
-                        selected: _leaveType == LeaveType.single,
-                        selectedColor: theme.primaryColor,
-                        onSelected: (selected) {
-                          setState(() {
-                            _leaveType = selected ? LeaveType.single : LeaveType.none;
-                            _selectedLongLeaveDates.clear();
-                             _choiceDates.clear();
-                          });
-                        },
-                      ),
-                      const SizedBox(width: 8),
-                      ChoiceChip(
-                        label: const Text('Long Leave'),
-                        selected: _leaveType == LeaveType.long,
-                        selectedColor: theme.primaryColor,
-                        onSelected: (selected) {
-                          setState(() {
-                            _leaveType = selected ? LeaveType.long : LeaveType.none;
-                            _selectedSingleDate = null;
-                            _choiceDates.clear();
-                          });
-                        },
-                      ),
-                       const SizedBox(width: 8),
-                      ChoiceChip(
-                        label: const Text('Choice'),
-                        selected: _leaveType == LeaveType.choice,
-                        selectedColor: theme.primaryColor,
-                        onSelected: (selected) {
-                          setState(() {
-                            _leaveType = selected ? LeaveType.choice : LeaveType.none;
-                            _selectedSingleDate = null;
-                            _selectedLongLeaveDates.clear();
-                            if (selected) {
-                              _showChoiceInfoPopup();
-                            }
-                          });
-                        },
-                      ),
-                    ],
+                  ChoiceChip(
+                    label: const Text('Choice'),
+                    selected: true, // Always selected
+                    selectedColor: theme.primaryColor,
+                    onSelected: (selected) {
+                      // No action needed as it's the only option
+                    },
+                  ),
+                  const SizedBox(height: 16),
+                  Text(
+                    '1 click for Present (🟢)\n2 clicks for Absent (🔴)\n3 clicks to deselect.',
+                    textAlign: TextAlign.center,
+                    style: theme.textTheme.bodyMedium?.copyWith(color: theme.colorScheme.onBackground.withOpacity(0.7)),
                   ),
                   const SizedBox(height: 16),
                   _buildCalendarView(theme, firstSelectableDate, lastSelectableDate),
@@ -419,7 +333,7 @@ class _LeavePlannerScreenState extends State<LeavePlannerScreen> {
                     width: double.infinity,
                     child: ElevatedButton(
                       style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 16), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
-                      onPressed: (_selectedSingleDate != null || _selectedLongLeaveDates.isNotEmpty || _choiceDates.isNotEmpty) && !_isLoading ? _analyzeLeave : null,
+                      onPressed: _choiceDates.isNotEmpty && !_isLoading ? _analyzeLeave : null,
                       child: const Text('Analyze Leave Impact'),
                     ),
                   ),
@@ -654,24 +568,15 @@ class _LeavePlannerScreenState extends State<LeavePlannerScreen> {
 
 
   Widget _buildCalendarView(ThemeData theme, DateTime firstDate, DateTime lastDate) {
-    bool isEnabled = _leaveType != LeaveType.none;
+    // Calendar is always enabled as Choice is the only option
     return Material(
-      color: theme.cardColor.withAlpha(isEnabled ? 178 : 51),
+      color: theme.cardColor.withAlpha(178),
       borderRadius: BorderRadius.circular(16),
-      child: GestureDetector(
-        onTap: () {
-          if (_leaveType == LeaveType.none) {
-            _showSelectOptionPopup();
-          }
-        },
-        child: AbsorbPointer(
-        absorbing: !isEnabled,
-        child: Padding(
-          padding: const EdgeInsets.all(12.0),
-          child: Column(children: [_buildCalendarHeader(theme, firstDate, lastDate), const SizedBox(height: 8), _buildCalendarGrid(theme, firstDate, lastDate)]),
-        ),
+      child: Padding(
+        padding: const EdgeInsets.all(12.0),
+        child: Column(children: [_buildCalendarHeader(theme, firstDate, lastDate), const SizedBox(height: 8), _buildCalendarGrid(theme, firstDate, lastDate)]),
       ),
-    ));
+    );
   }
 
   Widget _buildCalendarHeader(ThemeData theme, DateTime firstDate, DateTime lastDate) {
@@ -709,17 +614,9 @@ class _LeavePlannerScreenState extends State<LeavePlannerScreen> {
       Color? selectionColor;
 
       if (isSelectable) {
-        if (_leaveType == LeaveType.single) {
-          isSelected = _selectedSingleDate != null && DateUtils.isSameDay(date, _selectedSingleDate);
-          if (isSelected) selectionColor = theme.primaryColor;
-        } else if (_leaveType == LeaveType.long) {
-          isSelected = _selectedLongLeaveDates.any((d) => DateUtils.isSameDay(date, d));
-          if (isSelected) selectionColor = theme.primaryColor;
-        } else if (_leaveType == LeaveType.choice) {
-          if (_choiceDates.containsKey(date)) {
-            isSelected = true;
-            selectionColor = _choiceDates[date] == 1 ? Colors.green : Colors.red;
-          }
+        if (_choiceDates.containsKey(date)) {
+          isSelected = true;
+          selectionColor = _choiceDates[date] == 1 ? Colors.green : Colors.red;
         }
       }
 

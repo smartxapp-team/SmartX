@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'dart:ui';
 
+import '../providers/auth_provider.dart';
 import '../providers/theme_provider.dart';
 import 'profile_screen.dart'; // Import the profile screen
 
@@ -36,6 +37,21 @@ class SettingsScreen extends StatelessWidget {
             trailing: Icon(Icons.arrow_forward_ios, size: 16, color: theme.textTheme.bodyMedium?.color),
             onTap: () => _showThemePicker(context),
           ),
+        ),
+        const SizedBox(height: 16),
+        Consumer<AuthProvider>(
+          builder: (context, authProvider, child) {
+            return Card(
+              child: SwitchListTile(
+                title: Text('Biometric Login', style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold)),
+                value: authProvider.biometricEnabled,
+                onChanged: (bool value) {
+                  authProvider.setBiometricEnabled(value);
+                },
+                secondary: Icon(Icons.fingerprint, color: theme.colorScheme.primary),
+              ),
+            );
+          },
         ),
       ],
     );
