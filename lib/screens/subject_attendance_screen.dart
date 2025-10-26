@@ -52,11 +52,11 @@ class _SubjectAttendanceScreenState extends State<SubjectAttendanceScreen> {
 
   AttendanceStatus _getAttendanceStatus(double percentage) {
     if (percentage >= 75) {
-      return AttendanceStatus('Satisfactory', Colors.green.shade400);
+      return AttendanceStatus('Satisfactory', const Color(0xFF4CAF50)); // Green
     } else if (percentage >= 65) {
-      return AttendanceStatus('Condonation', Colors.blue.shade400);
+      return AttendanceStatus('Condonation', const Color(0xFF2196F3)); // Blue
     } else {
-      return AttendanceStatus('Shortage', Colors.red.shade400);
+      return AttendanceStatus('Shortage', const Color(0xFFF44336)); // Red
     }
   }
 
@@ -366,130 +366,124 @@ class _SubjectAttendanceScreenState extends State<SubjectAttendanceScreen> {
     final percentage = (course['percentage'] as num).toDouble();
     final attended = course['attended'] as int;
     final conducted = course['conducted'] as int;
+    final missed = conducted - attended;
     final status = _getAttendanceStatus(percentage);
 
-    return Container(
-      margin: const EdgeInsets.symmetric(vertical: 6.0, horizontal: 12.0),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(16),
-        gradient: LinearGradient(
-          colors: [
-            status.color.withOpacity(0.4),
-            status.color.withOpacity(0.1),
-          ],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.1),
-            blurRadius: 4,
-            offset: const Offset(0, 2),
+    return Card(
+      margin: const EdgeInsets.symmetric(vertical: 8.0, horizontal: 16.0),
+      elevation: 2,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      clipBehavior: Clip.antiAlias,
+      child: Stack(
+        children: [
+          // The color mask on the right
+          Positioned.fill(
+            child: Align(
+              alignment: Alignment.centerRight,
+              child: FractionallySizedBox(
+                widthFactor: 1.0, // Adjust the width of the mask
+                heightFactor: 1.0, // <-- FIX: Ensure it fills the height
+                child: Container(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: [
+                        status.color.withOpacity(0.05),
+                        status.color.withOpacity(0.2),
+                      ],
+                      begin: Alignment.centerLeft,
+                      end: Alignment.centerRight,
+                    ),
+                  ),
+                ),
+              ),
+            ),
           ),
-        ],
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Column(
-          children: [
-            Row(
+          // The main content
+          Padding(
+            padding: const EdgeInsets.all(16.0),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                SizedBox(
-                  width: 50,
-                  height: 50,
-                  child: Stack(
-                    fit: StackFit.expand,
-                    children: [
-                      CircularProgressIndicator(
-                        value: percentage / 100,
-                        strokeWidth: 6,
-                        backgroundColor: status.color.withOpacity(0.2),
-                        valueColor: AlwaysStoppedAnimation<Color>(status.color),
+                // Top Row: Subject Name and Percentage
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: Text(
+                        course['name'],
+                        style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold, fontSize: 18),
                       ),
-                      Center(
-                        child: Text(
-                          '${percentage.toInt()}%',
-                          style: theme.textTheme.bodyLarge?.copyWith(
-                            fontWeight: FontWeight.bold,
-                            color: theme.colorScheme.onSurface,
-                          ),
-                        ),
+                    ),
+                    Text(
+                      '${percentage.toStringAsFixed(1)}%',
+                      style: theme.textTheme.titleLarge?.copyWith(
+                        fontWeight: FontWeight.bold,
+                        color: status.color,
+                        fontSize: 18,
                       ),
-                    ],
-                  ),
+                    ),
+                  ],
                 ),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      FittedBox(
-                        fit: BoxFit.scaleDown,
-                        alignment: Alignment.centerLeft,
-                        child: Text(
-                          course['name'],
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: theme.textTheme.titleMedium?.copyWith(
-                            fontWeight: FontWeight.bold,
-                            color: theme.colorScheme.onSurface,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        'Conducted: $conducted',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: theme.textTheme.bodyMedium?.copyWith(
-                          color: theme.colorScheme.onSurface.withOpacity(0.7),
-                        ),
-                      ),
-                      Text(
-                        'Attended: $attended',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: theme.textTheme.bodyMedium?.copyWith(
-                          color: theme.colorScheme.onSurface.withOpacity(0.7),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(width: 8),
+                const SizedBox(height: 4),
                 Text(
                   status.text,
                   style: theme.textTheme.bodyMedium?.copyWith(
                     color: status.color,
                     fontWeight: FontWeight.bold,
                   ),
-                )
+                ),
+                const SizedBox(height: 16),
+                // Bottom Row: Attended, Conducted, Missed
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceAround,
+                  children: [
+                    _buildCountColumn(theme, count: attended, label: 'Attended'),
+                    _buildCountColumn(theme, count: conducted, label: 'Conducted'),
+                    _buildCountColumn(theme, count: missed, label: 'Missed'),
+                  ],
+                ),
+                if (_isBunkMode)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 16.0),
+                    child: Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 12),
+                      decoration: BoxDecoration(
+                        color: status.color.withOpacity(0.15),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Text(
+                        _calculateBunkMessage(attended, conducted),
+                        style: theme.textTheme.bodyLarge?.copyWith(
+                          fontWeight: FontWeight.bold,
+                          color: theme.colorScheme.onSurface,
+                        ),
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+                  ),
               ],
             ),
-            if (_isBunkMode)
-              Padding(
-                padding: const EdgeInsets.only(top: 16.0),
-                child: Container(
-                  width: double.infinity,
-                  padding:
-                      const EdgeInsets.symmetric(vertical: 10, horizontal: 12),
-                  decoration: BoxDecoration(
-                    color: status.color.withOpacity(0.15),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Text(
-                    _calculateBunkMessage(attended, conducted),
-                    style: theme.textTheme.bodyLarge?.copyWith(
-                      fontWeight: FontWeight.bold,
-                      color: theme.colorScheme.onSurface,
-                    ),
-                    textAlign: TextAlign.center,
-                  ),
-                ),
-              ),
-          ],
-        ),
+          ),
+        ],
       ),
+    );
+  }
+
+  Widget _buildCountColumn(ThemeData theme, {required int count, required String label}) {
+    return Column(
+      children: [
+        Text(
+          count.toString(),
+          style: theme.textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold),
+        ),
+        const SizedBox(height: 2),
+        Text(
+          label,
+          style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurface.withOpacity(0.7)),
+        ),
+      ],
     );
   }
 }

@@ -26,6 +26,10 @@ class AppTheme {
     'light_pastel': pastelTheme,
     'dark_vibrant': vibrantTheme,
     'dark_cool': coolTheme,
+    'flower': flowerTheme,
+    'forest': forestTheme,
+    'ocean': oceanTheme,
+    'sunrise': sunriseTheme,
   };
 
   // Maps a theme key to its background asset
@@ -35,6 +39,10 @@ class AppTheme {
     'light_pastel': 'assets/bg_light_pastel.png',
     'dark_vibrant': 'assets/bg_dark_vibrant.png',
     'dark_cool': 'assets/bg_dark_cool.png',
+    'flower': 'assets/bg_flower.png',
+    'forest': 'assets/bg_forest.png',
+    'ocean': 'assets/bg_ocean.png',
+    'sunrise': 'assets/bg_sunrise.png',
   };
 
 
@@ -83,6 +91,42 @@ class AppTheme {
     surfaceColor: const Color(0xFF1A2B59).withOpacity(0.7),
     onSurfaceColor: Colors.white,
     secondaryTextColor: Colors.grey.shade400,
+  );
+
+  static final ThemeData flowerTheme = _createTheme(
+    brightness: Brightness.light,
+    primaryColor: const Color(0xFFD95B9B),
+    backgroundColor: const Color(0xFFF9E8F1),
+    surfaceColor: Colors.white.withOpacity(0.8),
+    onSurfaceColor: const Color(0xFF3B1F2D),
+    secondaryTextColor: Colors.grey.shade600,
+  );
+
+  static final ThemeData forestTheme = _createTheme(
+    brightness: Brightness.dark,
+    primaryColor: const Color(0xFF5EDC79),
+    backgroundColor: const Color(0xFF1B2A1E),
+    surfaceColor: const Color(0xFF2C3E2F).withOpacity(0.7),
+    onSurfaceColor: Colors.white,
+    secondaryTextColor: Colors.grey.shade400,
+  );
+
+  static final ThemeData oceanTheme = _createTheme(
+    brightness: Brightness.dark,
+    primaryColor: const Color(0xFF5AB9E8),
+    backgroundColor: const Color(0xFF192C3A),
+    surfaceColor: const Color(0xFF254157).withOpacity(0.7),
+    onSurfaceColor: Colors.white,
+    secondaryTextColor: Colors.grey.shade400,
+  );
+
+  static final ThemeData sunriseTheme = _createTheme(
+    brightness: Brightness.light,
+    primaryColor: const Color(0xFFE87A5B),
+    backgroundColor: const Color(0xFFF9EFE8),
+    surfaceColor: Colors.white.withOpacity(0.8),
+    onSurfaceColor: const Color(0xFF3B2A1F),
+    secondaryTextColor: Colors.grey.shade600,
   );
 
 

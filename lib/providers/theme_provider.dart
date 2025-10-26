@@ -9,6 +9,10 @@ const Map<String, String> themeDisplayNames = {
   'light_pastel': 'Pastel',
   'dark_vibrant': 'Vibrant',
   'dark_cool': 'Cool',
+  'flower': 'Flower',
+  'forest': 'Forest',
+  'ocean': 'Ocean',
+  'sunrise': 'Sunrise',
 };
 
 class ThemeProvider with ChangeNotifier {

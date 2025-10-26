@@ -465,29 +465,59 @@ def fetch_results(username, session_cookies):
     cached_data = get_data_from_cache(username, 'results')
     if cached_data: return cached_data
 
-    status, response = fetch_secure_page(session_cookies, 'https://samvidha.iare.ac.in/home?action=g_stud_results')
+    # status, response = fetch_secure_page(session_cookies, 'https://samvidha.iare.ac.in/home?action=g_stud_results')
+    status, response = fetch_secure_page(session_cookies, 'https://samvidha.iare.ac.in/home?action=credit_register')
     if status != "SUCCESS": return {"error": status}
 
     try:
         soup = BeautifulSoup(response.text, 'lxml')
-        results = []
-        cgpa = 'N/A'
+        # results = []
+        # cgpa = 'N/A'
+        semesters_data = []
+        final_cgpa = 'N/A'
 
-        table = soup.find('table', class_='table-bordered')
-        if table:
-            for row in table.find_all('tr')[1:]:
-                cells = [cell.get_text(strip=True) for cell in row.find_all('td')]
-                if len(cells) >= 10:
-                    results.append({
-                        'semester': cells[1],
-                        'sgpa': cells[9]
-                    })
+        # table = soup.find('table', class_='table-bordered')
+        # if table:
+        #     for row in table.find_all('tr')[1:]:
+        #         cells = [cell.get_text(strip=True) for cell in row.find_all('td')]
+        #         if len(cells) >= 10:
+        #             results.append({
+        #                 'semester': cells[1],
+        #                 'sgpa': cells[9]
+        #             })
+        # Find all semester header rows
+        semester_headers = soup.find_all('tr', class_='text-center bg-lightblue disabled')
 
-        cgpa_element = soup.find('h3', class_='text-center')
-        if cgpa_element and 'CGPA' in cgpa_element.text:
-            cgpa = cgpa_element.text.split(':')[-1].strip()
+        # cgpa_element = soup.find('h3', class_='text-center')
+        # if cgpa_element and 'CGPA' in cgpa_element.text:
+        #     cgpa = cgpa_element.text.split(':')[-1].strip()
+        for header in semester_headers:
+            semester_name_raw = header.get_text(strip=True)
 
-        results_data = {'semesters': results, 'cgpa': cgpa}
+             # Find the SGPA for this semester
+            sgpa_row = header.find_next('tr', class_='bg-danger')
+            if sgpa_row:
+                sgpa_text = sgpa_row.get_text(strip=True)
+                if ':' in sgpa_text:
+                    sgpa_value = sgpa_text.split(':')[-1].strip()
+                    if sgpa_value and sgpa_value != '-':
+                        semesters_data.append({
+                            'semester': semester_name_raw.replace(' SEMESTER', ''),
+                            'sgpa': sgpa_value
+                        })
+
+        # results_data = {'semesters': results, 'cgpa': cgpa}
+        # Find the VERY LAST 'bg-teal' row for the final CGPA
+        all_cgpa_rows = soup.find_all('tr', class_='bg-teal')
+        if all_cgpa_rows:
+            last_cgpa_row = all_cgpa_rows[-1]
+            cgpa_text = last_cgpa_row.get_text(strip=True)
+            if ':' in cgpa_text:
+                cgpa_value = cgpa_text.split(':')[-1].strip()
+                if cgpa_value and cgpa_value != '-':
+                     final_cgpa = cgpa_value
+
+        results_data = {'semesters': semesters_data, 'cgpa': final_cgpa}
         set_data_in_cache(username, 'results', results_data)
         return results_data
     except Exception as e:
@@ -581,15 +611,8 @@ def api_login():
     session_data = perform_login(username, password)
     if session_data:
         SESSIONS_CACHE[username] = session_data
-
-        # Fetch profile details to get full_name and profile_pic_url
-        profile_details = scrape_profile_details(username, session_data['cookies'])
-
-        full_name = profile_details.get('full_name', username)
-        profile_pic_url = profile_details.get('profile_pic_url')
-
         access_token = create_access_token(identity=username)
-        return jsonify({"message": "Login successful", "username": username, "token": access_token, "fullName": full_name, "profilePictureUrl": profile_pic_url})
+        return jsonify({"message": "Login successful", "username": username, "token": access_token})
     else:
         return jsonify({"error": "Invalid credentials"}), 401
 
@@ -713,7 +736,7 @@ def api_lab_courses(username):
 def api_lab_details(username, course_code):
     session_data = SESSIONS_CACHE.get(username)
     if not session_data: return jsonify({"error": "User not logged in"}), 401
-    lab_data = fetch_lab_deadlines_data(session_cookies, username)
+    lab_data = fetch_lab_deadlines_data(session_data['cookies'], username)
     if 'error' in lab_data: return jsonify(lab_data), 500
     course_details = lab_data.get(course_code)
     if not course_details: return jsonify({"error": "Invalid course code"}), 404

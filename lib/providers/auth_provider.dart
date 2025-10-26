@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
 import 'package:local_auth/local_auth.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../config/app_config.dart';
 
@@ -97,6 +98,11 @@ class AuthProvider with ChangeNotifier {
         // Store biometric_enabled state on successful login too, in case it was toggled before login
         await _secureStorage.write(key: 'biometric_enabled', value: _biometricEnabled.toString());
 
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString('username', user);
+        await prefs.setString('token', _token!);
+        await prefs.setString('apiUrl', _apiUrl);
+
         notifyListeners();
         return true;
       } else {
@@ -125,6 +131,12 @@ class AuthProvider with ChangeNotifier {
     _isLoggedIn = false;
     _biometricEnabled = false; // Clear biometric state on logout
     await _secureStorage.deleteAll();
+
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('username');
+    await prefs.remove('token');
+    await prefs.remove('apiUrl');
+
     notifyListeners();
   }
 }

@@ -115,7 +115,6 @@ class ApiService {
 
     final classAttendance = (attendanceData['overall_percentage'] as num?)?.toDouble() ?? 0.0;
     
-    // Correctly calculate and pass on the total attended and conducted classes.
     final courses = List<Map<String, dynamic>>.from(attendanceData['courses'] ?? []);
     final totalAttended = courses.fold<int>(0, (prev, course) => prev + (course['attended'] as int? ?? 0));
     final totalConducted = courses.fold<int>(0, (prev, course) => prev + (course['conducted'] as int? ?? 0));
@@ -138,6 +137,12 @@ class ApiService {
   Future<Map<String, dynamic>> fetchProfile() async {
     final response = await http.get(Uri.parse('$apiUrl/api/profile/$username'), headers: _headers).timeout(const Duration(seconds: 20));
     if (response.statusCode != 200) throw Exception('Failed to load profile');
+    return json.decode(response.body);
+  }
+
+  Future<Map<String, dynamic>> fetchResults() async {
+    final response = await http.get(Uri.parse('$apiUrl/api/results/$username'), headers: _headers).timeout(const Duration(seconds: 20));
+    if (response.statusCode != 200) throw Exception('Failed to load results');
     return json.decode(response.body);
   }
 }
